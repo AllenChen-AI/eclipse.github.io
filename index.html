@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <!-- 關鍵更新：鎖定原生縮放，讓 3D Canvas 完整接管雙指縮放 (Pinch-to-zoom) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>日食與月食 3D 視覺化模擬 (行動適配版)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 鎖定預設觸控行為，防止雙指縮放網頁與下拉更新 */
+        body { margin: 0; overflow: hidden; background-color: #050505; color: white; font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; touch-action: none; overscroll-behavior: none; }
+        
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; }
+        
+        /* 針對小螢幕加入捲軸適配 */
+        .panel { pointer-events: auto; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 10px 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); max-height: 48vh; overflow-y: auto; }
+        /* 自訂捲軸樣式 */
+        .panel::-webkit-scrollbar { width: 4px; }
+        .panel::-webkit-scrollbar-thumb { background: #64748b; border-radius: 4px; }
+
+        .btn { background: #3b82f6; color: white; padding: 6px 10px; border-radius: 6px; cursor: pointer; transition: all 0.2s; border: none; font-weight: bold; width: 100%; display: flex; align-items: center; justify-content: center; gap: 4px; }
+        .btn:hover { background: #2563eb; transform: translateY(-1px); }
+        
+        .slider-container { margin-bottom: 8px; }
+        .slider-label { display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px; color: #cbd5e1; }
+        input[type=range] { width: 100%; cursor: pointer; }
+        
+        #status-banner {
+            pointer-events: auto;
+            align-self: center;
+            margin-top: 10px;
+            padding: 6px 18px;
+            border-radius: 50px;
+            font-size: 0.95rem;
+            font-weight: bold;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.7);
+            border: 2px solid #334155;
+            transition: all 0.3s ease;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+            white-space: nowrap;
+        }
+        
+        /* 動態狀態顏色 */
+        .status-solar-total { border-color: #fbbf24; color: #fbbf24; box-shadow: 0 0 20px rgba(251, 191, 36, 0.5); }
+        .status-solar-annular { border-color: #f59e0b; color: #f59e0b; box-shadow: 0 0 15px rgba(245, 158, 11, 0.4); }
+        .status-solar-partial { border-color: #fcd34d; color: #fcd34d; box-shadow: 0 0 10px rgba(252, 211, 77, 0.2); }
+        .status-lunar-total { border-color: #ef4444; color: #ef4444; box-shadow: 0 0 20px rgba(239, 68, 68, 0.5); }
+        .status-lunar-partial { border-color: #fca5a5; color: #fca5a5; box-shadow: 0 0 10px rgba(252, 165, 165, 0.2); }
+        .status-normal { border-color: #3b82f6; color: #60a5fa; }
+
+        #pip-window { pointer-events: auto; }
+
+        /* 智慧橫向提示蓋板 (當螢幕直向時顯示) */
+        #portrait-lock {
+            display: none;
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: #050505; z-index: 9999;
+            color: white; justify-content: center; align-items: center;
+            flex-direction: column; text-align: center;
+        }
+        @media screen and (orientation: portrait) {
+            #portrait-lock { display: flex; }
+            #ui-layer { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 直向防護罩 -->
+    <div id="portrait-lock">
+        <div class="text-6xl mb-4 animate-bounce">📱🔄</div>
+        <h1 class="text-2xl font-bold mb-2 text-blue-400">請旋轉您的裝置</h1>
+        <p class="text-gray-400 text-sm">本 3D 模擬專為橫向螢幕設計<br>請將手機或平板轉為橫放以開始體驗</p>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <div id="ui-layer" class="p-2 sm:p-4">
+        
+        <!-- 頂部區塊 -->
+        <div class="flex justify-between items-start w-full relative">
+            <div class="w-[180px] hidden sm:block"></div> 
+            
+            <div id="status-banner" class="status-normal z-10 absolute left-1/2 transform -translate-x-1/2 sm:text-lg">
+                目前狀態：載入中...
+            </div>
+
+            <!-- 右上角：地球觀測視角 (動態適配手機尺寸) -->
+            <div id="pip-window" class="w-[120px] h-[120px] sm:w-[180px] sm:h-[180px] md:w-[240px] md:h-[240px] border border-gray-600 rounded-lg flex flex-col justify-between p-1 md:p-2 shadow-2xl relative">
+                <div id="pip-event-label" class="bg-white text-black font-bold px-1.5 py-0.5 rounded shadow w-max text-[10px] sm:text-[12px] z-10">
+                    載入中
+                </div>
+                <div class="bg-gray-200 text-gray-800 text-[9px] sm:text-[11px] font-bold px-1.5 py-0.5 rounded shadow w-max z-10">
+                    地球視角
+                </div>
+            </div>
+        </div>
+
+        <!-- 底部控制面板 (強制維持 Row 橫向排列以符合預設橫屏) -->
+        <div class="flex flex-row justify-between items-end h-full mt-2 gap-2">
+            
+            <!-- 左側：教學情境 -->
+            <div class="panel w-[160px] sm:w-[240px] flex-shrink-0">
+                <h2 class="text-sm sm:text-base font-bold mb-2 text-white border-b border-gray-600 pb-1">教學情境</h2>
+                <div class="grid grid-cols-2 gap-1.5 mb-1">
+                    <button id="btn-solar-total" class="btn text-[10px] sm:text-xs" style="background:#d97706;">日全食</button>
+                    <button id="btn-solar-annular" class="btn text-[10px] sm:text-xs" style="background:#d97706;">日環食</button>
+                    <button id="btn-solar-partial" class="btn text-[10px] sm:text-xs" style="background:#d97706;">日偏食</button>
+                    <button id="btn-lunar-total" class="btn text-[10px] sm:text-xs" style="background:#b91c1c;">月全食</button>
+                    <button id="btn-lunar-partial" class="btn text-[10px] sm:text-xs" style="background:#b91c1c;">月偏食</button>
+                    <button id="btn-normal" class="btn text-[10px] sm:text-xs" style="background:#4f46e5;">無食相</button>
+                </div>
+            </div>
+
+            <!-- 右側：參數與視角控制 -->
+            <div class="panel w-[160px] sm:w-[240px] flex-shrink-0">
+                <h2 class="text-sm sm:text-base font-bold mb-2 text-white border-b border-gray-600 pb-1">環境參數</h2>
+                
+                <div class="slider-container">
+                    <div class="slider-label"><span>運轉速度</span> <span id="val-speed">1x</span></div>
+                    <input type="range" id="slider-speed" min="0" max="6" step="1" value="4">
+                </div>
+
+                <div class="slider-container">
+                    <div class="slider-label">
+                        <span>白道傾角</span> 
+                        <span id="val-inclination">5°</span>
+                    </div>
+                    <input type="range" id="slider-inclination" min="0" max="15" step="0.1" value="5.1">
+                </div>
+
+                <div class="slider-container">
+                    <div class="slider-label">
+                        <span class="text-yellow-200">近地點方向</span> 
+                        <span id="val-periapsis">0°</span>
+                    </div>
+                    <input type="range" id="slider-periapsis" min="0" max="360" step="1" value="0">
+                </div>
+
+                <div class="mt-2 pt-2 border-t border-gray-600">
+                    <div class="grid grid-cols-2 gap-1.5">
+                        <button id="btn-toggle-cones" class="btn text-[10px] sm:text-[11px]" style="background: #475569;">光線路徑</button>
+                        <button id="btn-toggle-orbit" class="btn text-[10px] sm:text-[11px]" style="background: #475569;">軌道線</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'https://cdn.skypack.dev/three@0.136.0';
+        import { OrbitControls } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/controls/OrbitControls.js';
+
+        // --- 1. 場景與視角設定 ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        
+        const godCamera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        godCamera.position.set(30, 20, 45); 
+
+        const earthCamera = new THREE.PerspectiveCamera(22, 1, 0.1, 1000); 
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+        // 考慮行動裝置的解析度，優化效能
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.autoClear = false; 
+        container.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(godCamera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.minDistance = 5;
+        controls.maxDistance = 150;
+        controls.target.set(0, 0, 0);
+
+        // --- 處理 PiP (子母畫面) 座標與大小 ---
+        let pipRect = { left: 0, bottom: 0, width: 260, height: 260, webglY: 0 };
+        function updatePipRect() {
+            const pipDiv = document.getElementById('pip-window');
+            const rect = pipDiv.getBoundingClientRect();
+            // 在行動裝置旋轉時避免錯誤數值
+            if(rect.width === 0) return; 
+            
+            pipRect.left = rect.left;
+            pipRect.width = rect.width;
+            pipRect.height = rect.height;
+            pipRect.webglY = window.innerHeight - rect.bottom;
+            earthCamera.aspect = rect.width / rect.height;
+            earthCamera.updateProjectionMatrix();
+        }
+        
+        window.addEventListener('resize', () => {
+            godCamera.aspect = window.innerWidth / window.innerHeight;
+            godCamera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            // 給予短暫延遲讓行動裝置更新版面
+            setTimeout(updatePipRect, 150); 
+        });
+        setTimeout(updatePipRect, 100);
+
+        // --- 2. 星空背景 ---
+        function createStars() {
+            const starGeo = new THREE.BufferGeometry();
+            const starCount = 2000; // 適配行動端效能微調數量
+            const posArray = new Float32Array(starCount * 3);
+            for(let i = 0; i < starCount * 3; i++) {
+                posArray[i] = (Math.random() - 0.5) * 500;
+            }
+            starGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+            const starMat = new THREE.PointsMaterial({ size: 0.6, color: 0xffffff, transparent: true, opacity: 0.8 });
+            scene.add(new THREE.Points(starGeo, starMat));
+        }
+        createStars();
+
+        // --- 3. 光源設定 ---
+        scene.add(new THREE.AmbientLight(0x0a0a16, 0.4));
+
+        const sunLight = new THREE.DirectionalLight(0xffffff, 2.5);
+        sunLight.position.set(100, 0, 0); 
+        sunLight.castShadow = true;
+        // 行動端維持 1024 即可保持流暢與美觀
+        sunLight.shadow.mapSize.width = 1024;
+        sunLight.shadow.mapSize.height = 1024;
+        sunLight.shadow.camera.near = 50;
+        sunLight.shadow.camera.far = 150;
+        const d = 20;
+        sunLight.shadow.camera.left = -d;
+        sunLight.shadow.camera.right = d;
+        sunLight.shadow.camera.top = d;
+        sunLight.shadow.camera.bottom = -d;
+        sunLight.shadow.bias = -0.001;
+        scene.add(sunLight);
+
+        // ==========================================
+        // --- 4. 天體模型建立 ---
+        // ==========================================
+        const earthRadius = 4.0;
+        const moonRadius = 1.25; 
+        const sunRadius = 8.0; 
+        const sunDistance = 100;
+        
+        const earthConeLength = earthRadius * sunDistance / (sunRadius - earthRadius); 
+        const moonConeLength = moonRadius * sunDistance / (sunRadius - moonRadius);
+
+        const sunGeo = new THREE.SphereGeometry(sunRadius, 32, 32);
+        const sunMat = new THREE.MeshBasicMaterial({ color: 0xffffee }); 
+        const sunMesh = new THREE.Mesh(sunGeo, sunMat);
+        sunMesh.position.set(sunDistance, 0, 0); 
+        scene.add(sunMesh);
+        sunMesh.add(new THREE.PointLight(0xffcc55, 1.0, 200)); 
+
+        // 🌟 太陽的動態發光外圈 (日冕 / Corona)
+        function createCoronaTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256; // 適配行動端
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            const center = 128;
+            const gradient = ctx.createRadialGradient(center, center, 0, center, center, center);
+            
+            gradient.addColorStop(0.48, 'rgba(255, 255, 255, 1)'); 
+            gradient.addColorStop(0.50, 'rgba(255, 250, 200, 1)'); 
+            gradient.addColorStop(0.58, 'rgba(255, 230, 100, 1)'); 
+            gradient.addColorStop(0.62, 'rgba(255, 200, 50, 0.8)'); 
+            gradient.addColorStop(0.75, 'rgba(255, 120, 10, 0.2)'); 
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 256, 256);
+            return new THREE.CanvasTexture(canvas);
+        }
+        
+        const coronaMat = new THREE.SpriteMaterial({
+            map: createCoronaTexture(),
+            color: 0xffffff,
+            transparent: true,
+            blending: THREE.AdditiveBlending, 
+            depthWrite: false 
+        });
+        const coronaSprite = new THREE.Sprite(coronaMat);
+        coronaSprite.scale.set(sunRadius * 4, sunRadius * 4, 1);
+        sunMesh.add(coronaSprite);
+
+        const earthMat = new THREE.MeshStandardMaterial({ 
+            color: 0x2266cc, roughness: 0.6, metalness: 0.1 
+        });
+        const earthMesh = new THREE.Mesh(new THREE.SphereGeometry(earthRadius, 64, 64), earthMat);
+        earthMesh.castShadow = true;
+        earthMesh.receiveShadow = true;
+        scene.add(earthMesh);
+
+        const eclipticLine = new THREE.LineLoop(
+            new THREE.EdgesGeometry(new THREE.CircleGeometry(26, 64)),
+            new THREE.LineBasicMaterial({ color: 0x445566, transparent: true, opacity: 0.4 })
+        );
+        eclipticLine.rotation.x = Math.PI / 2;
+        scene.add(eclipticLine);
+
+        const orbitA = 20.0; 
+        const orbitE = 0.15; 
+        let periapsisAngle = 0; 
+        
+        function getMoonDistance(theta) {
+            return (orbitA * (1 - orbitE * orbitE)) / (1 + orbitE * Math.cos(theta - periapsisAngle));
+        }
+        
+        const nodeGroup = new THREE.Group(); 
+        scene.add(nodeGroup);
+        const tiltGroup = new THREE.Group(); 
+        nodeGroup.add(tiltGroup);
+
+        const moonOrbitLine = new THREE.Line(
+            new THREE.BufferGeometry(), 
+            new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 })
+        );
+        tiltGroup.add(moonOrbitLine);
+
+        function updateOrbitGeo() {
+            const orbitPoints = [];
+            for(let i = 0; i <= 64; i++) {
+                const theta = (i / 64) * Math.PI * 2;
+                const r = getMoonDistance(theta); 
+                orbitPoints.push(new THREE.Vector3(Math.cos(theta) * r, 0, Math.sin(theta) * r));
+            }
+            moonOrbitLine.geometry.setFromPoints(orbitPoints);
+        }
+        updateOrbitGeo();
+
+        const moonMat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.9 });
+        const moonMesh = new THREE.Mesh(new THREE.SphereGeometry(moonRadius, 32, 32), moonMat);
+        moonMesh.castShadow = true;
+        moonMesh.receiveShadow = true;
+        tiltGroup.add(moonMesh);
+
+        // --- 5. 光線路徑 ---
+        const rayMaterial = new THREE.LineDashedMaterial({ 
+            color: 0xffffaa, dashSize: 0.6, gapSize: 0.4, transparent: true, opacity: 0.6 
+        });
+        
+        const earthLightRays = new THREE.LineSegments(new THREE.BufferGeometry(), rayMaterial);
+        const moonLightRays = new THREE.LineSegments(new THREE.BufferGeometry(), rayMaterial);
+        scene.add(earthLightRays);
+        scene.add(moonLightRays);
+
+        function updateShadowRays(lineMesh, sourcePos, sourceRadius, targetPos, targetRadius) {
+            const positions = [];
+            const axis = new THREE.Vector3().subVectors(targetPos, sourcePos).normalize();
+            const up = new THREE.Vector3(0, 1, 0);
+            if (Math.abs(axis.y) > 0.99) up.set(1, 0, 0);
+            const right = new THREE.Vector3().crossVectors(axis, up).normalize();
+            const trueUp = new THREE.Vector3().crossVectors(right, axis).normalize();
+
+            for (let i = 0; i < 2; i++) { 
+                const angle = i * Math.PI; 
+                const offset = new THREE.Vector3()
+                    .addScaledVector(right, Math.cos(angle))
+                    .addScaledVector(trueUp, Math.sin(angle));
+                
+                const p1 = new THREE.Vector3().copy(sourcePos).addScaledVector(offset, sourceRadius);
+                const p2 = new THREE.Vector3().copy(targetPos).addScaledVector(offset, targetRadius);
+                
+                const dir = new THREE.Vector3().subVectors(p2, p1);
+                const dist = dir.length();
+                dir.normalize();
+                
+                const lineStart = p1; 
+                const lineEnd = new THREE.Vector3().copy(p1).addScaledVector(dir, dist + 40); 
+                
+                positions.push(lineStart.x, lineStart.y, lineStart.z);
+                positions.push(lineEnd.x, lineEnd.y, lineEnd.z);
+            }
+            lineMesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            lineMesh.computeLineDistances(); 
+        }
+
+        // --- 6. 狀態與控制 ---
+        let time = -Math.PI/2;    
+        let timeSpeed = 0.005;    
+        let inclination = 5.1;    
+        let showRays = false;     
+        let showOrbit = true;
+        
+        earthLightRays.visible = showRays;
+        moonLightRays.visible = showRays;
+
+        // --- 7. 邏輯更新 ---
+        const statusBanner = document.getElementById('status-banner');
+        const pipLabel = document.getElementById('pip-event-label');
+        const moonWorldPos = new THREE.Vector3();
+
+        function updateSimulation() {
+            time += timeSpeed;
+            const currentR = getMoonDistance(time);
+            moonMesh.position.x = Math.cos(time) * currentR;
+            moonMesh.position.z = Math.sin(time) * currentR;
+
+            tiltGroup.rotation.x = inclination * (Math.PI / 180);
+            moonMesh.getWorldPosition(moonWorldPos);
+            
+            if (showRays) {
+                updateShadowRays(moonLightRays, sunMesh.position, sunRadius, moonWorldPos, moonRadius);
+                updateShadowRays(earthLightRays, sunMesh.position, sunRadius, new THREE.Vector3(0,0,0), earthRadius);
+            }
+
+            let currentStatus = "🌍 一般軌道 (無食相)";
+            let statusClass = "status-normal";
+            const distFromAxis = Math.sqrt(moonWorldPos.y**2 + moonWorldPos.z**2);
+
+            if (moonWorldPos.x > 0 && moonWorldPos.x < 50) {
+                const theta_s = sunRadius / sunDistance; 
+                const theta_m = moonRadius / currentR; 
+                const alpha = distFromAxis / currentR; 
+
+                if (alpha < theta_s + theta_m) { 
+                    if (alpha < Math.abs(theta_s - theta_m)) { 
+                        if (theta_m >= theta_s) {
+                            currentStatus = "🌞 日全食 (Total Solar Eclipse)";
+                            statusClass = "status-solar-total";
+                        } else {
+                            currentStatus = "🌞 日環食 (Annular Eclipse)";
+                            statusClass = "status-solar-annular";
+                        }
+                    } else {
+                        currentStatus = "🌤️ 日偏食 (Partial Eclipse)";
+                        statusClass = "status-solar-partial";
+                    }
+                }
+            } 
+            else if (moonWorldPos.x < 0) {
+                const r_u = earthRadius - (earthRadius / earthConeLength) * currentR; 
+                if (distFromAxis + moonRadius < r_u) {
+                    currentStatus = "🌕 月全食 (Total Lunar Eclipse)";
+                    statusClass = "status-lunar-total";
+                } else if (distFromAxis - moonRadius < r_u) {
+                    currentStatus = "🌖 月偏食 (Partial Eclipse)";
+                    statusClass = "status-lunar-partial";
+                }
+            }
+
+            if(statusBanner.innerText !== currentStatus) {
+                statusBanner.innerText = currentStatus;
+                statusBanner.className = statusClass;
+                
+                if (statusClass.includes("solar-total")) pipLabel.innerText = "日全食";
+                else if (statusClass.includes("solar-annular")) pipLabel.innerText = "日環食";
+                else if (statusClass.includes("solar-partial")) pipLabel.innerText = "日偏食";
+                else if (statusClass.includes("lunar-total")) pipLabel.innerText = "月全食";
+                else if (statusClass.includes("lunar-partial")) pipLabel.innerText = "月偏食";
+                else pipLabel.innerText = moonWorldPos.x > 0 ? "日食觀測" : "月食觀測";
+            }
+
+            if (statusClass === "status-lunar-total") moonMat.emissive.setHex(0x550000);
+            else if (statusClass === "status-lunar-partial") moonMat.emissive.setHex(0x220000);
+            else moonMat.emissive.setHex(0x000000);
+
+            if (moonWorldPos.x > 0) {
+                const camDir = sunMesh.position.clone().normalize();
+                earthCamera.position.copy(camDir.multiplyScalar(earthRadius + 0.1));
+                earthCamera.lookAt(sunMesh.position);
+            } else {
+                const camDir = moonWorldPos.clone().normalize();
+                earthCamera.position.copy(camDir.multiplyScalar(earthRadius + 0.1));
+                earthCamera.lookAt(moonWorldPos);
+            }
+        }
+
+        // --- 8. 事件綁定 ---
+        function setScenario(inc, periapsis, nodeY, t) {
+            inclination = inc;
+            document.getElementById('slider-inclination').value = inc;
+            document.getElementById('val-inclination').innerText = inc + '°';
+            
+            periapsisAngle = periapsis * (Math.PI / 180);
+            document.getElementById('slider-periapsis').value = periapsis;
+            document.getElementById('val-periapsis').innerText = periapsis + '°';
+            updateOrbitGeo();
+            
+            nodeGroup.rotation.y = nodeY;
+            time = t;
+        }
+
+        document.getElementById('btn-solar-total').onclick = () => setScenario(0, 0, 0, 0);
+        document.getElementById('btn-solar-annular').onclick = () => setScenario(0, 180, 0, 0);
+        document.getElementById('btn-solar-partial').onclick = () => setScenario(5.1, 0, 0.6, 0.6);
+        
+        document.getElementById('btn-lunar-total').onclick = () => setScenario(0, 0, 0, Math.PI);
+        document.getElementById('btn-lunar-partial').onclick = () => setScenario(8.0, 0, 0.6, 0.6 + Math.PI);
+        document.getElementById('btn-normal').onclick = () => setScenario(15.0, 0, Math.PI/2, -Math.PI/2);
+
+        const speedOptions = [0, 0.1, 0.3, 0.5, 1, 2, 5];
+        document.getElementById('slider-speed').oninput = (e) => {
+            const selectedSpeed = speedOptions[parseInt(e.target.value)];
+            timeSpeed = selectedSpeed * 0.005;
+            document.getElementById('val-speed').innerText = selectedSpeed + 'x';
+        };
+        
+        document.getElementById('slider-inclination').oninput = (e) => {
+            inclination = parseFloat(e.target.value);
+            document.getElementById('val-inclination').innerText = inclination + '°';
+        };
+        document.getElementById('slider-periapsis').oninput = (e) => {
+            const deg = parseInt(e.target.value);
+            periapsisAngle = deg * (Math.PI / 180);
+            document.getElementById('val-periapsis').innerText = deg + '°';
+            updateOrbitGeo();
+        };
+
+        document.getElementById('btn-toggle-cones').onclick = () => {
+            showRays = !showRays;
+            earthLightRays.visible = showRays;
+            moonLightRays.visible = showRays;
+        };
+        document.getElementById('btn-toggle-orbit').onclick = () => {
+            showOrbit = !showOrbit;
+            moonOrbitLine.visible = showOrbit;
+            eclipticLine.visible = showOrbit;
+        };
+
+        // --- 9. 渲染迴圈 ---
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            updateSimulation();
+
+            renderer.setViewport(0, 0, window.innerWidth, window.innerHeight);
+            renderer.setScissor(0, 0, window.innerWidth, window.innerHeight);
+            renderer.setScissorTest(true);
+            renderer.setClearColor(0x020205); 
+            renderer.clear(); 
+            renderer.render(scene, godCamera);
+
+            if(pipRect.width > 0) {
+                renderer.setViewport(pipRect.left, pipRect.webglY, pipRect.width, pipRect.height);
+                renderer.setScissor(pipRect.left, pipRect.webglY, pipRect.width, pipRect.height);
+                renderer.setScissorTest(true);
+                renderer.setClearColor(0x000000); 
+                renderer.clear(); 
+                renderer.render(scene, earthCamera);
+            }
+        }
+
+        animate();
+
+    </script>
+</body>
+</html>
