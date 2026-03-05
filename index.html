@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <!-- 關鍵更新：鎖定原生縮放，讓 3D Canvas 完整接管雙指縮放 (Pinch-to-zoom) -->
+    <!-- 鎖定原生縮放，讓 3D Canvas 完整接管雙指縮放 (Pinch-to-zoom) -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>日食與月食 3D 視覺化模擬 (行動適配版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -11,28 +11,50 @@
         body { margin: 0; overflow: hidden; background-color: #050505; color: white; font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; touch-action: none; overscroll-behavior: none; }
         
         #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
-        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; }
         
-        /* 針對小螢幕加入捲軸適配，預設樣式 */
-        .panel { pointer-events: auto; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.15); border-radius: 12px; padding: 10px 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); max-height: 55vh; overflow-y: auto; }
-        /* 自訂捲軸樣式 */
+        /* * 👑 絕對定位排版策略 (Absolute Positioning) 
+         * 放棄 Flexbox，將 UI 釘在四角，徹底解決小螢幕互相推擠的問題
+         */
+        #ui-layer { position: absolute; top: 0; left: 0; w-full; height: 100%; z-index: 10; pointer-events: none; overflow: hidden; }
+        
+        /* 預設樣式 (針對平板與桌機 Desktop / Tablet) */
+        .panel { 
+            pointer-events: auto; 
+            background: rgba(15, 23, 42, 0.85); 
+            backdrop-filter: blur(12px); 
+            border: 1px solid rgba(255,255,255,0.15); 
+            border-radius: 12px; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5); 
+            overflow-y: auto; 
+            
+            width: 260px; 
+            padding: 16px;
+        }
         .panel::-webkit-scrollbar { width: 4px; }
         .panel::-webkit-scrollbar-thumb { background: #64748b; border-radius: 4px; }
 
-        .btn { background: #3b82f6; color: white; padding: 6px 10px; border-radius: 6px; cursor: pointer; transition: all 0.2s; border: none; font-weight: bold; width: 100%; display: flex; align-items: center; justify-content: center; gap: 4px; }
+        .btn { background: #3b82f6; color: white; border-radius: 6px; cursor: pointer; transition: all 0.2s; border: none; font-weight: bold; width: 100%; display: flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 12px; font-size: 0.875rem; }
         .btn:hover { background: #2563eb; transform: translateY(-1px); }
         
-        .slider-container { margin-bottom: 8px; }
-        .slider-label { display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px; color: #cbd5e1; }
+        .slider-container { margin-bottom: 10px; }
+        .slider-label { display: flex; justify-content: space-between; margin-bottom: 2px; color: #cbd5e1; font-size: 0.875rem; }
         input[type=range] { width: 100%; cursor: pointer; }
         
+        .panel h2 { font-size: 1rem; margin-bottom: 8px; border-bottom: 1px solid #4b5563; padding-bottom: 4px; }
+
+        #pip-window { 
+            width: 220px; 
+            height: 220px; 
+            border: 2px solid #4b5563; 
+            border-radius: 8px; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.4); 
+            backdrop-filter: blur(4px);
+        }
+
         #status-banner {
             pointer-events: auto;
-            align-self: center;
-            margin-top: 10px;
-            padding: 6px 18px;
             border-radius: 50px;
-            font-size: 0.95rem;
             font-weight: bold;
             text-align: center;
             background: rgba(0, 0, 0, 0.7);
@@ -40,8 +62,12 @@
             transition: all 0.3s ease;
             text-shadow: 0 2px 4px rgba(0,0,0,0.8);
             white-space: nowrap;
+            font-size: 1.1rem; 
+            padding: 8px 24px;
         }
         
+        .pip-tag { font-size: 12px; padding: 3px 6px; }
+
         /* 動態狀態顏色 */
         .status-solar-total { border-color: #fbbf24; color: #fbbf24; box-shadow: 0 0 20px rgba(251, 191, 36, 0.5); }
         .status-solar-annular { border-color: #f59e0b; color: #f59e0b; box-shadow: 0 0 15px rgba(245, 158, 11, 0.4); }
@@ -49,8 +75,6 @@
         .status-lunar-total { border-color: #ef4444; color: #ef4444; box-shadow: 0 0 20px rgba(239, 68, 68, 0.5); }
         .status-lunar-partial { border-color: #fca5a5; color: #fca5a5; box-shadow: 0 0 10px rgba(252, 165, 165, 0.2); }
         .status-normal { border-color: #3b82f6; color: #60a5fa; }
-
-        #pip-window { pointer-events: auto; }
 
         /* 智慧橫向提示蓋板 (當螢幕直向時顯示) */
         #portrait-lock {
@@ -65,44 +89,42 @@
             #ui-layer { display: none; }
         }
 
-        /* 👑 針對手機橫向 (高度過小) 的終極防遮擋壓縮策略 (不影響平板) */
+        /* * 👑 針對手機橫向專用：高度過小 (< 500px) 的終極壓縮策略 
+         * (平板高度通常 > 700px，因此不受此段 CSS 影響，保持原本大比例)
+         */
         @media screen and (max-height: 500px) and (orientation: landscape) {
             .panel { 
-                padding: 6px 8px; /* 縮小內距 */
+                width: 160px !important; 
+                padding: 8px 10px !important; 
                 border-radius: 8px;
-                max-height: 60vh; /* 稍微放寬最大高度限制 */
+            }
+            #pip-window { 
+                width: 120px !important; 
+                height: 120px !important; 
             }
             .panel h2 {
-                font-size: 0.8rem;
-                margin-bottom: 4px;
-                padding-bottom: 2px;
+                font-size: 0.8rem !important;
+                margin-bottom: 4px !important;
+                padding-bottom: 2px !important;
             }
             .btn {
-                padding: 4px 6px;
-                font-size: 0.65rem;
-                border-radius: 4px;
+                padding: 4px 4px !important;
+                font-size: 0.65rem !important;
+                border-radius: 4px !important;
             }
-            .slider-container {
-                margin-bottom: 4px;
-            }
-            .slider-label {
-                font-size: 0.65rem;
-            }
-            input[type=range] {
-                height: 12px; /* 讓滑桿變細 */
-            }
+            .slider-container { margin-bottom: 4px !important; }
+            .slider-label { font-size: 0.65rem !important; margin-bottom: 0px !important;}
+            input[type=range] { height: 12px; }
+            
             #status-banner {
-                margin-top: 4px;
-                padding: 4px 12px;
-                font-size: 0.8rem;
+                padding: 4px 16px !important;
+                font-size: 0.85rem !important;
             }
-            #ui-layer {
-                padding: 4px 8px; /* 整體 UI 外距縮小 */
-            }
-            /* 強制設定面板寬度更小 */
-            .mobile-panel {
-                width: 140px !important;
-            }
+            .pip-tag { font-size: 9px !important; padding: 2px 4px !important; }
+
+            /* 動態限制環境參數面板最大高度，避免撞到子母畫面 */
+            #panel-settings { max-height: calc(100vh - 145px); } 
+            #panel-scenario { max-height: calc(100vh - 20px); }
         }
     </style>
 </head>
@@ -115,85 +137,63 @@
         <p class="text-gray-400 text-sm">本 3D 模擬專為橫向螢幕設計<br>請將手機或平板轉為橫放以開始體驗</p>
     </div>
 
+    <!-- 3D 畫布 -->
     <div id="canvas-container"></div>
 
-    <div id="ui-layer" class="p-2 sm:p-4">
+    <!-- UI 覆蓋層 (全絕對定位排版) -->
+    <div id="ui-layer" class="w-full h-full">
         
-        <!-- 頂部區塊 -->
-        <div class="flex justify-between items-start w-full relative">
-            <div class="w-[180px] hidden sm:block"></div> 
-            
-            <div id="status-banner" class="status-normal z-10 absolute left-1/2 transform -translate-x-1/2 sm:text-lg">
-                目前狀態：載入中...
-            </div>
+        <!-- 頂部狀態列 (置中) -->
+        <div id="status-banner" class="status-normal absolute top-3 sm:top-5 left-1/2 transform -translate-x-1/2 z-20">
+            目前狀態：載入中...
+        </div>
 
-            <!-- 右上角：地球觀測視角 (動態適配手機尺寸) -->
-            <div id="pip-window" class="w-[120px] h-[120px] sm:w-[180px] sm:h-[180px] md:w-[240px] md:h-[240px] border border-gray-600 rounded-lg flex flex-col justify-between p-1 md:p-2 shadow-2xl relative">
-                <div id="pip-event-label" class="bg-white text-black font-bold px-1.5 py-0.5 rounded shadow w-max text-[10px] sm:text-[12px] z-10">
-                    載入中
-                </div>
-                <div class="bg-gray-200 text-gray-800 text-[9px] sm:text-[11px] font-bold px-1.5 py-0.5 rounded shadow w-max z-10">
-                    地球視角
-                </div>
+        <!-- 右上角：地球觀測視角 (子母畫面) -->
+        <div id="pip-window" class="absolute top-3 sm:top-5 right-3 sm:right-5 flex flex-col justify-between p-1 z-10 pointer-events-none">
+            <div id="pip-event-label" class="pip-tag bg-white text-black font-bold rounded shadow w-max z-10">載入中</div>
+            <div class="pip-tag bg-gray-200 text-gray-800 font-bold rounded shadow w-max z-10">地球視角</div>
+        </div>
+
+        <!-- 左下角：教學情境 -->
+        <div id="panel-scenario" class="panel absolute bottom-3 sm:bottom-5 left-3 sm:left-5 z-20">
+            <h2>教學情境預設</h2>
+            <div class="grid grid-cols-2 gap-1.5 mb-1">
+                <button id="btn-solar-total" class="btn" style="background:#d97706;">日全食</button>
+                <button id="btn-solar-annular" class="btn" style="background:#d97706;">日環食</button>
+                <button id="btn-solar-partial" class="btn" style="background:#d97706;">日偏食</button>
+                <button id="btn-lunar-total" class="btn" style="background:#b91c1c;">月全食</button>
+                <button id="btn-lunar-partial" class="btn" style="background:#b91c1c;">月偏食</button>
+                <button id="btn-normal" class="btn" style="background:#4f46e5;">無食相</button>
             </div>
         </div>
 
-        <!-- 底部控制面板 (強制維持 Row 橫向排列以符合預設橫屏) -->
-        <div class="flex flex-row justify-between items-end h-full mt-2 gap-2">
-            
-            <!-- 左側：教學情境 -->
-            <div class="panel mobile-panel w-[160px] sm:w-[240px] flex-shrink-0">
-                <h2 class="text-sm sm:text-base font-bold mb-2 text-white border-b border-gray-600 pb-1">教學情境</h2>
-                <div class="grid grid-cols-2 gap-1 mb-1 sm:gap-1.5">
-                    <button id="btn-solar-total" class="btn text-[10px] sm:text-xs" style="background:#d97706;">日全食</button>
-                    <button id="btn-solar-annular" class="btn text-[10px] sm:text-xs" style="background:#d97706;">日環食</button>
-                    <button id="btn-solar-partial" class="btn text-[10px] sm:text-xs" style="background:#d97706;">日偏食</button>
-                    <button id="btn-lunar-total" class="btn text-[10px] sm:text-xs" style="background:#b91c1c;">月全食</button>
-                    <button id="btn-lunar-partial" class="btn text-[10px] sm:text-xs" style="background:#b91c1c;">月偏食</button>
-                    <button id="btn-normal" class="btn text-[10px] sm:text-xs" style="background:#4f46e5;">無食相</button>
-                </div>
+        <!-- 右下角：環境參數 -->
+        <div id="panel-settings" class="panel absolute bottom-3 sm:bottom-5 right-3 sm:right-5 z-20">
+            <h2>環境參數控制</h2>
+            <div class="slider-container">
+                <div class="slider-label"><span>運轉速度</span> <span id="val-speed">1x</span></div>
+                <input type="range" id="slider-speed" min="0" max="6" step="1" value="4">
             </div>
-
-            <!-- 右側：參數與視角控制 -->
-            <div class="panel mobile-panel w-[160px] sm:w-[240px] flex-shrink-0">
-                <h2 class="text-sm sm:text-base font-bold mb-2 text-white border-b border-gray-600 pb-1">環境參數</h2>
-                
-                <div class="slider-container">
-                    <div class="slider-label"><span>運轉速度</span> <span id="val-speed">1x</span></div>
-                    <input type="range" id="slider-speed" min="0" max="6" step="1" value="4">
-                </div>
-
-                <div class="slider-container">
-                    <div class="slider-label">
-                        <span>白道傾角</span> 
-                        <span id="val-inclination">5°</span>
-                    </div>
-                    <input type="range" id="slider-inclination" min="0" max="15" step="0.1" value="5.1">
-                </div>
-
-                <div class="slider-container">
-                    <div class="slider-label">
-                        <span class="text-yellow-200">近地點方向</span> 
-                        <span id="val-periapsis">0°</span>
-                    </div>
-                    <input type="range" id="slider-periapsis" min="0" max="360" step="1" value="0">
-                </div>
-
-                <div class="mt-2 pt-2 border-t border-gray-600">
-                    <div class="grid grid-cols-2 gap-1 sm:gap-1.5">
-                        <button id="btn-toggle-cones" class="btn text-[10px] sm:text-[11px]" style="background: #475569;">光線路徑</button>
-                        <button id="btn-toggle-orbit" class="btn text-[10px] sm:text-[11px]" style="background: #475569;">軌道線</button>
-                    </div>
-                </div>
+            <div class="slider-container">
+                <div class="slider-label"><span>白道傾角</span> <span id="val-inclination">5°</span></div>
+                <input type="range" id="slider-inclination" min="0" max="15" step="0.1" value="5.1">
+            </div>
+            <div class="slider-container">
+                <div class="slider-label"><span class="text-yellow-200">近地點方向</span> <span id="val-periapsis">0°</span></div>
+                <input type="range" id="slider-periapsis" min="0" max="360" step="1" value="0">
+            </div>
+            <div class="mt-2 pt-2 border-t border-gray-600 grid grid-cols-2 gap-1.5">
+                <button id="btn-toggle-cones" class="btn" style="background: #475569;">👁️ 光線</button>
+                <button id="btn-toggle-orbit" class="btn" style="background: #475569;">🔄 軌道</button>
             </div>
         </div>
+
     </div>
 
     <script type="module">
         import * as THREE from 'https://cdn.skypack.dev/three@0.136.0';
         import { OrbitControls } from 'https://cdn.skypack.dev/three@0.136.0/examples/jsm/controls/OrbitControls.js';
 
-        // --- 1. 場景與視角設定 ---
         const container = document.getElementById('canvas-container');
         const scene = new THREE.Scene();
         
@@ -203,7 +203,6 @@
         const earthCamera = new THREE.PerspectiveCamera(22, 1, 0.1, 1000); 
 
         const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-        // 考慮行動裝置的解析度，優化效能
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.shadowMap.enabled = true;
@@ -218,12 +217,11 @@
         controls.maxDistance = 150;
         controls.target.set(0, 0, 0);
 
-        // --- 處理 PiP (子母畫面) 座標與大小 ---
+        // --- 子母畫面動態計算 ---
         let pipRect = { left: 0, bottom: 0, width: 260, height: 260, webglY: 0 };
         function updatePipRect() {
             const pipDiv = document.getElementById('pip-window');
             const rect = pipDiv.getBoundingClientRect();
-            // 在行動裝置旋轉時避免錯誤數值
             if(rect.width === 0) return; 
             
             pipRect.left = rect.left;
@@ -238,15 +236,14 @@
             godCamera.aspect = window.innerWidth / window.innerHeight;
             godCamera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
-            // 給予短暫延遲讓行動裝置更新版面
             setTimeout(updatePipRect, 150); 
         });
         setTimeout(updatePipRect, 100);
 
-        // --- 2. 星空背景 ---
+        // --- 星空 ---
         function createStars() {
             const starGeo = new THREE.BufferGeometry();
-            const starCount = 2000; // 適配行動端效能微調數量
+            const starCount = 2000; 
             const posArray = new Float32Array(starCount * 3);
             for(let i = 0; i < starCount * 3; i++) {
                 posArray[i] = (Math.random() - 0.5) * 500;
@@ -257,13 +254,11 @@
         }
         createStars();
 
-        // --- 3. 光源設定 ---
+        // --- 光源 ---
         scene.add(new THREE.AmbientLight(0x0a0a16, 0.4));
-
         const sunLight = new THREE.DirectionalLight(0xffffff, 2.5);
         sunLight.position.set(100, 0, 0); 
         sunLight.castShadow = true;
-        // 行動端維持 1024 即可保持流暢與美觀
         sunLight.shadow.mapSize.width = 1024;
         sunLight.shadow.mapSize.height = 1024;
         sunLight.shadow.camera.near = 50;
@@ -276,9 +271,7 @@
         sunLight.shadow.bias = -0.001;
         scene.add(sunLight);
 
-        // ==========================================
-        // --- 4. 天體模型建立 ---
-        // ==========================================
+        // --- 天體模型 ---
         const earthRadius = 4.0;
         const moonRadius = 1.25; 
         const sunRadius = 8.0; 
@@ -294,41 +287,33 @@
         scene.add(sunMesh);
         sunMesh.add(new THREE.PointLight(0xffcc55, 1.0, 200)); 
 
-        // 🌟 太陽的動態發光外圈 (日冕 / Corona)
+        // 日冕
         function createCoronaTexture() {
             const canvas = document.createElement('canvas');
-            canvas.width = 256; // 適配行動端
+            canvas.width = 256; 
             canvas.height = 256;
             const ctx = canvas.getContext('2d');
             const center = 128;
             const gradient = ctx.createRadialGradient(center, center, 0, center, center, center);
-            
             gradient.addColorStop(0.48, 'rgba(255, 255, 255, 1)'); 
             gradient.addColorStop(0.50, 'rgba(255, 250, 200, 1)'); 
             gradient.addColorStop(0.58, 'rgba(255, 230, 100, 1)'); 
             gradient.addColorStop(0.62, 'rgba(255, 200, 50, 0.8)'); 
             gradient.addColorStop(0.75, 'rgba(255, 120, 10, 0.2)'); 
             gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-            
             ctx.fillStyle = gradient;
             ctx.fillRect(0, 0, 256, 256);
             return new THREE.CanvasTexture(canvas);
         }
         
         const coronaMat = new THREE.SpriteMaterial({
-            map: createCoronaTexture(),
-            color: 0xffffff,
-            transparent: true,
-            blending: THREE.AdditiveBlending, 
-            depthWrite: false 
+            map: createCoronaTexture(), color: 0xffffff, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false 
         });
         const coronaSprite = new THREE.Sprite(coronaMat);
         coronaSprite.scale.set(sunRadius * 4, sunRadius * 4, 1);
         sunMesh.add(coronaSprite);
 
-        const earthMat = new THREE.MeshStandardMaterial({ 
-            color: 0x2266cc, roughness: 0.6, metalness: 0.1 
-        });
+        const earthMat = new THREE.MeshStandardMaterial({ color: 0x2266cc, roughness: 0.6, metalness: 0.1 });
         const earthMesh = new THREE.Mesh(new THREE.SphereGeometry(earthRadius, 64, 64), earthMat);
         earthMesh.castShadow = true;
         earthMesh.receiveShadow = true;
@@ -377,11 +362,8 @@
         moonMesh.receiveShadow = true;
         tiltGroup.add(moonMesh);
 
-        // --- 5. 光線路徑 ---
-        const rayMaterial = new THREE.LineDashedMaterial({ 
-            color: 0xffffaa, dashSize: 0.6, gapSize: 0.4, transparent: true, opacity: 0.6 
-        });
-        
+        // --- 光線 ---
+        const rayMaterial = new THREE.LineDashedMaterial({ color: 0xffffaa, dashSize: 0.6, gapSize: 0.4, transparent: true, opacity: 0.6 });
         const earthLightRays = new THREE.LineSegments(new THREE.BufferGeometry(), rayMaterial);
         const moonLightRays = new THREE.LineSegments(new THREE.BufferGeometry(), rayMaterial);
         scene.add(earthLightRays);
@@ -397,28 +379,21 @@
 
             for (let i = 0; i < 2; i++) { 
                 const angle = i * Math.PI; 
-                const offset = new THREE.Vector3()
-                    .addScaledVector(right, Math.cos(angle))
-                    .addScaledVector(trueUp, Math.sin(angle));
-                
+                const offset = new THREE.Vector3().addScaledVector(right, Math.cos(angle)).addScaledVector(trueUp, Math.sin(angle));
                 const p1 = new THREE.Vector3().copy(sourcePos).addScaledVector(offset, sourceRadius);
                 const p2 = new THREE.Vector3().copy(targetPos).addScaledVector(offset, targetRadius);
-                
                 const dir = new THREE.Vector3().subVectors(p2, p1);
                 const dist = dir.length();
                 dir.normalize();
-                
                 const lineStart = p1; 
                 const lineEnd = new THREE.Vector3().copy(p1).addScaledVector(dir, dist + 40); 
-                
-                positions.push(lineStart.x, lineStart.y, lineStart.z);
-                positions.push(lineEnd.x, lineEnd.y, lineEnd.z);
+                positions.push(lineStart.x, lineStart.y, lineStart.z, lineEnd.x, lineEnd.y, lineEnd.z);
             }
             lineMesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
             lineMesh.computeLineDistances(); 
         }
 
-        // --- 6. 狀態與控制 ---
+        // --- 狀態更新 ---
         let time = -Math.PI/2;    
         let timeSpeed = 0.005;    
         let inclination = 5.1;    
@@ -428,7 +403,6 @@
         earthLightRays.visible = showRays;
         moonLightRays.visible = showRays;
 
-        // --- 7. 邏輯更新 ---
         const statusBanner = document.getElementById('status-banner');
         const pipLabel = document.getElementById('pip-event-label');
         const moonWorldPos = new THREE.Vector3();
@@ -509,7 +483,7 @@
             }
         }
 
-        // --- 8. 事件綁定 ---
+        // --- 事件綁定 ---
         function setScenario(inc, periapsis, nodeY, t) {
             inclination = inc;
             document.getElementById('slider-inclination').value = inc;
@@ -561,7 +535,7 @@
             eclipticLine.visible = showOrbit;
         };
 
-        // --- 9. 渲染迴圈 ---
+        // --- 渲染迴圈 ---
         function animate() {
             requestAnimationFrame(animate);
             controls.update();
